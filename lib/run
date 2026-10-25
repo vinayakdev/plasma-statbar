@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Boot/service entrypoint: runs cpu-thermal-cap with the target stored by `thermal-profile`.
+STATE=/var/lib/thermal-profile/current
+target=$(cat "$STATE" 2>/dev/null || echo off)
+[[ "$target" == off ]] && target=normal
+exec /usr/local/bin/cpu-thermal-cap "$target"

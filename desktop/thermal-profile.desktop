@@ -1,0 +1,28 @@
+[Desktop Entry]
+Type=Application
+Name=Thermal Profile
+Comment=Switch CPU thermal-cap profile
+Exec=thermal-profile menu
+Icon=temperature-normal
+Categories=System;Settings;
+Actions=cycle;off;quiet;balanced;performance;
+
+[Desktop Action cycle]
+Name=Cycle to next profile
+Exec=thermal-profile cycle
+
+[Desktop Action off]
+Name=Off (full speed)
+Exec=thermal-profile off
+
+[Desktop Action quiet]
+Name=Quiet (70°C)
+Exec=thermal-profile quiet
+
+[Desktop Action balanced]
+Name=Balanced (80°C)
+Exec=thermal-profile balanced
+
+[Desktop Action performance]
+Name=Performance (86°C)
+Exec=thermal-profile performance

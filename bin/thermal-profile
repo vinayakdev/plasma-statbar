@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# Switch between CPU thermal-cap profiles (wraps cpu-thermal-cap via cpu-thermal-cap.service).
+# The chosen profile is remembered and re-applied at boot.
+set -euo pipefail
+
+STATE=/var/lib/thermal-profile/current
+PROFILES="${XDG_CONFIG_HOME:-$HOME/.config}/thermal-profile/profiles"
+UNIT=cpu-thermal-cap.service
+
+if [[ ! -f "$PROFILES" ]]; then
+    mkdir -p "$(dirname "$PROFILES")"
+    cat > "$PROFILES" <<'DEFAULTS'
+# name        target (°C, 50-95) or "off"; order = cycle order
+off           off
+quiet         70
+balanced      80
+performance   86
+DEFAULTS
+fi
+
+# Load profiles into parallel arrays, preserving order.
+names=() targets=()
+while read -r name target _; do
+    [[ -z "$name" || "$name" == \#* ]] && continue
+    names+=("$name") targets+=("$target")
+done < "$PROFILES"
+
+current_target() { cat "$STATE" 2>/dev/null || echo off; }
+
+current_name() {
+    local t; t=$(current_target)
+    for i in "${!names[@]}"; do
+        [[ "${targets[$i]}" == "$t" ]] && { echo "${names[$i]}"; return; }
+    done
+    [[ "$t" == off ]] && echo off || echo "custom"
+}
+
+pkg_temp() {
+    for hw in /sys/class/hwmon/hwmon*; do
+        [[ "$(cat "$hw/name" 2>/dev/null)" == coretemp ]] || continue
+        echo $(( $(cat "$hw/temp1_input") / 1000 ))
+        return
+    done
+    echo "?"
+}
+
+status() {
+    local cap max
+    cap=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq)
+    max=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq)
+    local t; t=$(current_target)
+    printf "profile: %s (%s)\n" "$(current_name)" "$([[ $t == off ]] && echo "no cap" || echo "target ${t}°C")"
+    printf "service: %s\n" "$(systemctl is-active "$UNIT" 2>/dev/null || true)"
+    printf "temp:    %s°C\n" "$(pkg_temp)"
+    printf "freq cap: %d / %d MHz\n" $((cap / 1000)) $((max / 1000))
+}
+
+json() {
+    local cap max list="" i
+    cap=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq)
+    max=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq)
+    for i in "${!names[@]}"; do
+        list+="${list:+,}{\"name\":\"${names[$i]}\",\"target\":\"${targets[$i]}\"}"
+    done
+    printf '{"current":"%s","target":"%s","temp":"%s","cap":%d,"max":%d,"service":"%s","profiles":[%s]}\n' \
+        "$(current_name)" "$(current_target)" "$(pkg_temp)" $((cap / 1000)) $((max / 1000)) \
+        "$(systemctl is-active "$UNIT" 2>/dev/null || true)" "$list"
+}
+
+apply() {
+    local name="$1" target="$2"
+    echo "$target" > "$STATE"
+    if [[ "$target" == off ]]; then
+        systemctl stop "$UNIT"   # service's exit trap restores stock max freq
+    else
+        systemctl restart "$UNIT"
+    fi
+    local msg; msg=$([[ "$target" == off ]] && echo "Cap off — full speed" || echo "Holding CPU near ${target}°C")
+    echo "$name: $msg"
+    command -v notify-send >/dev/null && notify-send -a "Thermal Profile" -i temperature-normal \
+        -h string:x-canonical-private-synchronous:thermal-profile "Thermal: $name" "$msg" || true
+}
+
+set_profile() {
+    local want="$1"
+    for i in "${!names[@]}"; do
+        [[ "${names[$i]}" == "$want" ]] && { apply "$want" "${targets[$i]}"; return; }
+    done
+    if [[ "$want" =~ ^[0-9]+$ && "$want" -ge 50 && "$want" -le 95 ]]; then
+        apply "custom" "$want"; return
+    fi
+    echo "Unknown profile '$want'. Available: ${names[*]} (or a number 50-95)" >&2
+    exit 1
+}
+
+cycle() {
+    local cur; cur=$(current_name) next=0
+    for i in "${!names[@]}"; do
+        [[ "${names[$i]}" == "$cur" ]] && next=$(( (i + 1) % ${#names[@]} ))
+    done
+    set_profile "${names[$next]}"
+}
+
+menu() {
+    local cur rows=() choice
+    cur=$(current_name)
+    for i in "${!names[@]}"; do
+        rows+=("$([[ ${names[$i]} == "$cur" ]] && echo TRUE || echo FALSE)" "${names[$i]}" \
+               "$([[ ${targets[$i]} == off ]] && echo "no cap" || echo "${targets[$i]}°C")")
+    done
+    choice=$(zenity --list --radiolist --title="Thermal Profile" \
+        --text="Now: $cur — $(pkg_temp)°C" --width=320 --height=300 \
+        --column="" --column="Profile" --column="Target" "${rows[@]}") || exit 0
+    [[ -n "$choice" ]] && set_profile "$choice"
+}
+
+case "${1:-status}" in
+    status)        status ;;
+    json)          json ;;
+    list)          for i in "${!names[@]}"; do
+                       printf "%s %-12s %s\n" "$([[ ${names[$i]} == "$(current_name)" ]] && echo '*' || echo ' ')" \
+                           "${names[$i]}" "${targets[$i]}"
+                   done ;;
+    cycle|next)    cycle ;;
+    menu)          menu ;;
+    edit)          "${EDITOR:-nano}" "$PROFILES" ;;
+    -h|--help|help)
+        echo "Usage: thermal-profile [status|json|list|cycle|menu|edit|<profile>|<50-95>]"
+        echo "Profiles: $PROFILES" ;;
+    *)             set_profile "$1" ;;
+esac

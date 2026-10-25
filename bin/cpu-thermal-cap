@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Caps CPU max frequency in a feedback loop to hold package temp near a target.
+# Nothing here is persisted to disk - a reboot (or `normal` mode) restores stock behavior.
+set -euo pipefail
+
+MODE="${1:-}"
+if [[ "$MODE" != "normal" ]] && ! [[ "$MODE" =~ ^[0-9]+$ && "$MODE" -ge 50 && "$MODE" -le 95 ]]; then
+    echo "Usage: sudo $(basename "$0") {normal|50-95}" >&2
+    exit 1
+fi
+
+if [[ $EUID -ne 0 ]]; then
+    echo "Must run as root (writes to /sys/devices/system/cpu/...). Try: sudo $(basename "$0") $MODE" >&2
+    exit 1
+fi
+
+CPUFREQ_DIRS=(/sys/devices/system/cpu/cpu[0-9]*/cpufreq)
+MAX_FREQ=$(cat "${CPUFREQ_DIRS[0]}/cpuinfo_max_freq")
+MIN_FREQ=$(cat "${CPUFREQ_DIRS[0]}/cpuinfo_min_freq")
+
+# Locate coretemp's "Package id 0" input file (hwmon numbering isn't stable across boots).
+PKG_TEMP_FILE=""
+for hw in /sys/class/hwmon/hwmon*; do
+    [[ -f "$hw/name" ]] || continue
+    if [[ "$(cat "$hw/name")" == "coretemp" ]]; then
+        for label in "$hw"/temp*_label; do
+            if grep -q "Package id 0" "$label" 2>/dev/null; then
+                PKG_TEMP_FILE="${label%_label}_input"
+                break 2
+            fi
+        done
+    fi
+done
+if [[ -z "$PKG_TEMP_FILE" ]]; then
+    echo "Could not find coretemp package sensor" >&2
+    exit 1
+fi
+
+set_max_freq() {
+    local freq="$1"
+    for dir in "${CPUFREQ_DIRS[@]}"; do
+        echo "$freq" > "$dir/scaling_max_freq"
+    done
+}
+
+restore() {
+    echo
+    echo "Restoring stock max frequency (${MAX_FREQ} kHz)..."
+    set_max_freq "$MAX_FREQ"
+    echo "Done."
+}
+
+if [[ "$MODE" == "normal" ]]; then
+    restore
+    exit 0
+fi
+
+TARGET_C="$MODE"
+HYSTERESIS=4
+STEP=100000  # 100 MHz
+
+trap restore EXIT
+trap 'exit 130' INT TERM
+
+current=$MAX_FREQ
+echo "Capping CPU temp near ${TARGET_C}C (Ctrl+C to stop and restore normal speed)"
+while true; do
+    temp_milli=$(cat "$PKG_TEMP_FILE")
+    temp_c=$(( temp_milli / 1000 ))
+
+    if (( temp_c > TARGET_C )); then
+        current=$(( current - STEP ))
+        (( current < MIN_FREQ )) && current=$MIN_FREQ
+        set_max_freq "$current"
+    elif (( temp_c < TARGET_C - HYSTERESIS )); then
+        current=$(( current + STEP ))
+        (( current > MAX_FREQ )) && current=$MAX_FREQ
+        set_max_freq "$current"
+    fi
+
+    printf "\rtemp=%dC  cap=%dMHz   " "$temp_c" "$(( current / 1000 ))"
+    sleep 1
+done

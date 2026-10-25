@@ -1,0 +1,14 @@
+{
+    "KPlugin": {
+        "Id": "org.hotdogb.thermalprofile",
+        "Name": "Thermal Profile",
+        "Description": "Switch CPU thermal-cap profiles (thermal-profile)",
+        "Icon": "temperature-normal",
+        "Category": "System Information",
+        "Authors": [{ "Name": "hotdogb" }],
+        "Version": "1.0",
+        "License": "GPL-2.0+"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

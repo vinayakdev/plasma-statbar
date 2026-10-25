@@ -1,0 +1,12 @@
+[Unit]
+Description=CPU thermal cap (target from /var/lib/thermal-profile/current)
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/thermal-profile/run
+# cpu-thermal-cap redraws a status line every second; keep it out of the journal.
+StandardOutput=null
+SuccessExitStatus=130
+
+[Install]
+WantedBy=multi-user.target
