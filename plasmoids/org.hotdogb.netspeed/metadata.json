@@ -1,0 +1,14 @@
+{
+    "KPlugin": {
+        "Id": "org.hotdogb.netspeed",
+        "Name": "Net Speed",
+        "Description": "Live network upload/download rates",
+        "Icon": "network-transmit-receive",
+        "Category": "System Information",
+        "Authors": [{ "Name": "hotdogb" }],
+        "Version": "1.0",
+        "License": "GPL-2.0+"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
